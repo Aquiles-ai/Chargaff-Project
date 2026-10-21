@@ -772,9 +772,15 @@ class Attention(_CacheModule):
             score_for_loss = score.float()
         target = torch.softmax(target_logits, dim=-1).detach()
         log_probs = torch.log_softmax(score_for_loss, dim=-1)
+        if valid is not None:
+            # `target` is exactly zero on invalid positions, but 0 * (-inf) is NaN, so zero the
+            # log-probabilities there before the product. Those positions are dropped by the mask.
+            log_probs = log_probs.masked_fill(mask, 0.0)
         loss = -(target * log_probs).sum(dim=-1)
         if valid is not None:
-            loss = loss.masked_select(valid.unsqueeze(0))
+            # `loss` is [batch, seq], while `valid` is [seq, compressed]. The loss has already
+            # summed over compressed positions, so keep rows with at least one valid position.
+            loss = loss.masked_select(valid.any(dim=-1).unsqueeze(0))
         return loss.mean() if loss.numel() else None
 
     def forward(self, x: torch.Tensor, start_pos: int, shared: SharedAttentionRuntime, use_cache: bool):
